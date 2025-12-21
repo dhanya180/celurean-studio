@@ -1,0 +1,13 @@
+[package]
+name = "crimson_heart"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4.12.1"
+blake3 = "1.8.2"
+deadpool-redis = "0.22.0"
+dotenv = "0.15.0"
+serde = "1.0.228"
+sqlx = { version = "0.8.6", features = ["postgres"] }
+uuid = {version = "1.19.0", features = ["v7"]}
