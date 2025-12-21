@@ -1,4 +1,4 @@
-# Celurean-Studio
+# Celurean Studio
 
 ## Installation Instructions
 
