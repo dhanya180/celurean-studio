@@ -5,9 +5,17 @@ edition = "2024"
 
 [dependencies]
 actix-web = "4.12.1"
-blake3 = "1.8.2"
+actix-web-prom = "0.10.0"
+argon2 = "0.5.3"
 deadpool-redis = "0.22.0"
 dotenv = "0.15.0"
+prometheus = "0.14.0"
 serde = "1.0.228"
-sqlx = { version = "0.8.6", features = ["postgres"] }
+sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio-native-tls"] }
+tokio = "1.48.0"
+tracing = "0.1.44"
+tracing-actix-web = "0.7.20"
+tracing-loki = "0.2.6"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+url = "2.5.7"
 uuid = {version = "1.19.0", features = ["v7"]}
