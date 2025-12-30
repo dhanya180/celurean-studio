@@ -163,8 +163,12 @@ void bc_accept_client_socket(const int32_t *const __p_epoll_fd,
 		// may indicate no clients (or) error, check & branch
 		if (client_fd == __BC_FAILURE) {
 			// no clients, then break from loop
+			// if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			// 	BC_LOG("no clients to connect to", errno);
+			// 	break;
+			// }
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
-				BC_LOG("no clients to connect to", errno);
+				BC_LOG("no clients to connect to: %s\n", strerror(errno));
 				break;
 			}
 			// error

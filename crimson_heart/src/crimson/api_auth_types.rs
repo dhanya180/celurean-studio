@@ -7,3 +7,10 @@ pub struct HTTPUserRegister {
     pub birth_date: String,
     pub email: String,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HTTPUserLogin {
+    pub identity: String, // username or email
+    pub password: String,
+}
+

@@ -1,4 +1,4 @@
-use crate::crimson::api_auth_defs::http_get_user_register;
+use crate::crimson::api_auth_defs::{http_get_user_register, http_post_user_login, http_post_user_logout};
 use tracing_loki::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod crimson;
@@ -165,6 +165,8 @@ async fn main() -> std::io::Result<()> {
                 },
             ))
             .service(http_get_user_register)
+            .service(http_post_user_login)
+            .service(http_post_user_logout)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
