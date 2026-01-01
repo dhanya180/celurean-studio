@@ -61,6 +61,43 @@ INSERT INTO users(user_id, username, password, email, birth_date, created_at) VA
 1
 ```
 
+## Endpoint `/auth/login`
+- Run the command
+```bash
+wrk -t4 -c100 -d30s --timeout 10s -s bench_login.lua http://localhost:8080/auth/login
+```
+- Results
+```bash
+Running 30s test @ http://localhost:8080/auth/login
+  4 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     5.84s     1.40s    9.92s    77.31%
+    Req/Sec     6.37      5.05    30.00     80.37%
+  457 requests in 30.09s, 87.03KB read
+  Socket errors: connect 0, read 0, write 0, timeout 3
+Requests/sec:     15.19
+Transfer/sec:      2.89KB
+```
+
+## Endpoint `/auth/logout`
+- Run the command
+```bash
+wrk -t4 -c100 -d30s --timeout 2s -s bench_logout.lua   http://localhost:8080/auth/logout
+```
+Note:
+For logout benchmarking, a **valid session_id** cookie must be specified explicitly in **bench_logout.lua**.
+- Results
+```bash
+Running 30s test @ http://localhost:8080/auth/logout
+  4 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    38.21ms  110.43ms   1.07s    97.03%
+    Req/Sec     1.22k   178.19     1.59k    77.84%
+  141794 requests in 30.02s, 26.37MB read
+Requests/sec:   4723.67
+Transfer/sec:      0.88MB
+```
+
 ## Hardware 
 - CPU
 ```

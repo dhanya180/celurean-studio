@@ -10,7 +10,7 @@ pub struct HTTPUserRegister {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HTTPUserLogin {
-    pub identity: String, // username or email
+    pub email: String,
     pub password: String,
 }
 

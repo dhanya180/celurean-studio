@@ -292,7 +292,7 @@ async fn http_post_user_login(
             tracing::error!(
                 error = %e,
                 component = "redis_connection_pool",
-                "failed to acquire VAR `redis_connection` from actix_web's thread"
+                "failed to acquire redis connection"
             );
             return actix_web::HttpResponse::InternalServerError()
                 .body("Server Error, Refresh & Retry\n");
@@ -305,10 +305,23 @@ async fn http_post_user_login(
         .cookie("session_id")
         .map(|c| c.value().to_string())
     {
-        Some(id) => id,
+        Some(id) => {
+            tracing::debug!(
+                component = "session",
+                session_id = %id,
+                "existing session cookie found"
+            );
+            id
+        }
         None => {
             let new_session_id = uuid::Uuid::now_v7().to_string();
             let session_key = format!("session_id:{}", new_session_id);
+
+            tracing::info!(
+                component = "session",
+                session_id = %new_session_id,
+                "no session cookie found, creating anonymous session"
+            );
 
             let _: () = match redis_connection
                 .hset_multiple(
@@ -323,7 +336,7 @@ async fn http_post_user_login(
                         error = %e,
                         component = "redis_functions",
                         function = "hset_multiple",
-                        "function failed & returned error"
+                        "failed to create anonymous session"
                     );
                     return actix_web::HttpResponse::InternalServerError()
                         .body("Server Error, Refresh and Retry\n");
@@ -340,7 +353,7 @@ async fn http_post_user_login(
                         error = %e,
                         component = "redis_functions",
                         function = "expire",
-                        "function failed & returned error"
+                        "failed to set session expiry"
                     );
                     return actix_web::HttpResponse::InternalServerError()
                         .body("Server Error, Refresh and Retry\n");
@@ -365,60 +378,80 @@ async fn http_post_user_login(
     let session_key = format!("session_id:{}", &session_id);
 
     // fetch user from DB
-    let identity = &__request_payload.identity;
+    let email = &__request_payload.email;
     let password = &__request_payload.password;
+
+    tracing::info!(
+        component = "auth",
+        email = %email,
+        "login attempt received"
+    );
 
     let user = match sqlx::query!(
         r#"
         SELECT password
         FROM users
-        WHERE email = $1 OR username = $1
+        WHERE email = $1
         "#,
-        identity
+        email
     )
     .fetch_optional(&__server_state.central_db_pool)
     .await
     {
         Ok(Some(user)) => user,
         Ok(None) => {
+            tracing::info!(
+                component = "auth",
+                email = %email,
+                "login failed: user not registered"
+            );
             return actix_web::HttpResponse::NotFound()
                 .body("User not registered\n");
         }
-
         Err(e) => {
             tracing::error!(
                 error = %e,
                 component = "database",
                 query = "SELECT",
                 table = "users",
-                "function failed & returned error"
+                "database error during login"
             );
             return actix_web::HttpResponse::InternalServerError()
                 .body("Server Error, Refresh & Retry\n");
         }
     };
 
-    // verify password
-    let parsed_hash = match argon2::password_hash::PasswordHash::new(&user.password) {
-        Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                component = "argon2",
-                "failed to parse password hash"
-            );
-            return actix_web::HttpResponse::InternalServerError()
-                .body("Server Error, Refresh & Retry\n");
-        }
-    };
+    // password verification (blocking pool)
+    let password = password.clone();
+    let password_hash_string = user.password.clone();
 
-    if argon2::Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_err()
-    {
+    let verify_result = actix_web::web::block(move || {
+        let parsed_hash =
+            argon2::password_hash::PasswordHash::new(&password_hash_string)
+                .map_err(|_| ())?;
+
+        argon2::Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .map_err(|_| ())
+    })
+    .await;
+
+    if verify_result.is_err() {
+        tracing::info!(
+            component = "auth",
+            email = %email,
+            "login failed: invalid credentials"
+        );
         return actix_web::HttpResponse::Unauthorized()
             .body("Invalid credentials\n");
     }
+
+    tracing::info!(
+        component = "auth",
+        email = %email,
+        session_id = %session_id,
+        "password verification successful"
+    );
 
     // update session state
     let _: () = match redis_connection
@@ -435,7 +468,8 @@ async fn http_post_user_login(
                 error = %e,
                 component = "redis_functions",
                 function = "hset",
-                "function failed & returned error"
+                session_id = %session_id,
+                "failed to update session state"
             );
             return actix_web::HttpResponse::InternalServerError()
                 .body("Server Error, Refresh & Retry\n");
@@ -444,12 +478,21 @@ async fn http_post_user_login(
 
     match full_site_cookie {
         Some(cookie) => {
+            tracing::debug!(
+                component = "cookie",
+                session_id = %session_id,
+                "issuing new session cookie"
+            );
             actix_web::HttpResponse::Ok()
                 .cookie(cookie)
                 .body("successful\n")
         }
         None => {
-            tracing::info!(component = "cookie", "user cookie already exists");
+            tracing::debug!(
+                component = "cookie",
+                session_id = %session_id,
+                "session cookie already present"
+            );
             actix_web::HttpResponse::Ok().body("successful\n")
         }
     }
@@ -492,25 +535,50 @@ async fn http_post_user_logout(
         let old_session_id = cookie.value();
         let old_session_key = format!("session_id:{}", old_session_id);
 
+        tracing::info!(
+            component = "session",
+            session_id = %old_session_id,
+            "existing session found, invalidating"
+        );
+
         // delete old session from redis (hard invalidation)
         let _: () = match redis_connection.del(&old_session_key).await {
-            Ok(v) => v,
+            Ok(v) => {
+                tracing::info!(
+                    component = "session",
+                    session_id = %old_session_id,
+                    "old session deleted"
+                );
+                v
+            }
             Err(e) => {
                 tracing::error!(
                     error = %e,
                     component = "redis_functions",
                     function = "del",
+                    session_id = %old_session_id,
                     "failed to delete old session"
                 );
                 return actix_web::HttpResponse::InternalServerError()
                     .body("Server Error, Refresh & Retry\n");
             }
         };
+    } else {
+        tracing::info!(
+            component = "session",
+            "logout requested without existing session cookie"
+        );
     }
 
     // generate new session
     let new_session_id = uuid::Uuid::now_v7().to_string();
     let new_session_key = format!("session_id:{}", new_session_id);
+
+    tracing::debug!(
+        component = "session",
+        session_id = %new_session_id,
+        "creating new anonymous session"
+    );
 
     // mark new session as anonymous
     let _: () = match redis_connection
@@ -526,6 +594,7 @@ async fn http_post_user_logout(
                 error = %e,
                 component = "redis_functions",
                 function = "hset_multiple",
+                session_id = %new_session_id,
                 "failed to create new anonymous session"
             );
             return actix_web::HttpResponse::InternalServerError()
@@ -544,12 +613,19 @@ async fn http_post_user_logout(
                 error = %e,
                 component = "redis_functions",
                 function = "expire",
+                session_id = %new_session_id,
                 "failed to set session expiry"
             );
             return actix_web::HttpResponse::InternalServerError()
                 .body("Server Error, Refresh & Retry\n");
         }
     };
+
+    tracing::info!(
+        component = "session",
+        session_id = %new_session_id,
+        "logout successful, new anonymous session issued"
+    );
 
     // issue new cookie
     let cookie = actix_web::cookie::Cookie::build("session_id", new_session_id)
@@ -565,4 +641,3 @@ async fn http_post_user_logout(
         .cookie(cookie)
         .body("logged out\n")
 }
-
